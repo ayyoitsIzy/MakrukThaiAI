@@ -71,7 +71,8 @@ def move_piece(start, end):
     board[sr][sc] = '.'
 
 
-    
+def test():
+    print("test")
 
 
 
