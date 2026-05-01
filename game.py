@@ -291,19 +291,169 @@ class Game:
         return valid
 
     def handle_click(self, r, c):
-        if self.is_in_check(self.turn == 0):
-            print("CHECK!")
-        if self.selected is None:
-            if self.board[r][c] != '.' and self.check_turn(self.board[r][c]):
-                    self.selected = (r, c)
-        else:
-            sr, sc = self.selected
-            valid_moves = self.get_valid_moves(sr, sc)
+        piece = self.board[r][c]
 
-            if (r, c) in valid_moves:
-                self.move_piece(self.selected, (r, c))
-                self.turn = 1 - self.turn
-            else:
-                print("illegal move")
+        # ---------------- FIRST CLICK ----------------
+        if self.selected is None:
+            if piece != '.' and self.check_turn(piece):
+                self.selected = (r, c)
+            return
+
+        # ---------------- SECOND CLICK ----------------
+        sr, sc = self.selected
+
+        # 🔥 1. Click same square → cancel
+        if (r, c) == self.selected:
+            self.selected = None
+            return
+
+        # 🔥 2. Click another same-color piece → switch selection
+        if piece != '.' and self.check_turn(piece):
+            self.selected = (r, c)
+            return
+
+        # 🔥 3. Try move
+        valid_moves = self.get_valid_moves(sr, sc)
+
+        if (r, c) in valid_moves:
+            self.move_piece(self.selected, (r, c))
+            self.turn = 1 - self.turn
 
             self.selected = None
+
+            # ---------------- AI MOVE ----------------
+            ai_move = self.get_best_move(3)
+
+            if ai_move:
+                start, end = ai_move
+                self.move_piece(start, end)
+                self.turn = 1 - self.turn
+        else:
+            print("illegal move")
+        self.selected = None
+        
+
+    #-----------------------------------------AI---------------------------------------#
+    def evaluate_board(self):
+        score = 0
+
+        values = {
+            'p': 1, 'n': 3, 'b': 3, 'r': 5, 'm': 4, 'k': 1000
+        }
+
+        for i in range(8):
+            for j in range(8):
+                piece = self.board[i][j]
+
+                if piece == '.':
+                    continue
+
+                value = values[piece.lower()]
+
+                if piece.isupper():
+                    score += value
+                else:
+                    score -= value
+
+        return score
+    
+    def get_all_moves(self, is_white):
+        moves = []
+
+        for i in range(8):
+            for j in range(8):
+                piece = self.board[i][j]
+
+                if piece == '.':
+                    continue
+
+                if is_white and piece.isupper():
+                    for move in self.get_valid_moves(i, j):
+                        moves.append(((i, j), move))
+
+                elif not is_white and piece.islower():
+                    for move in self.get_valid_moves(i, j):
+                        moves.append(((i, j), move))
+
+        return moves
+    
+    def minimax(self, depth, is_maximizing):
+        if depth == 0:
+            return self.evaluate_board()
+
+        if is_maximizing:  # white
+            max_eval = -float('inf')
+
+            for move in self.get_all_moves(True):
+                start, end = move
+
+                captured = self.board[end[0]][end[1]]
+                piece = self.board[start[0]][start[1]]
+
+                self.move_piece(start, end)
+
+                eval = self.minimax(depth - 1, False)
+
+                # undo
+                self.board[start[0]][start[1]] = piece
+                self.board[end[0]][end[1]] = captured
+
+                max_eval = max(max_eval, eval)
+
+            return max_eval
+
+        else:  # black
+            min_eval = float('inf')
+
+            for move in self.get_all_moves(False):
+                start, end = move
+
+                captured = self.board[end[0]][end[1]]
+                piece = self.board[start[0]][start[1]]
+
+                self.move_piece(start, end)
+
+                eval = self.minimax(depth - 1, True)
+
+                # undo
+                self.board[start[0]][start[1]] = piece
+                self.board[end[0]][end[1]] = captured
+
+                min_eval = min(min_eval, eval)
+
+            return min_eval
+        
+    def get_best_move(self, depth):
+        is_white = (self.turn == 0)
+
+        best_move = None
+
+        if is_white:
+            best_value = -float('inf')
+        else:
+            best_value = float('inf')
+
+        for move in self.get_all_moves(is_white):
+            start, end = move
+
+            captured = self.board[end[0]][end[1]]
+            piece = self.board[start[0]][start[1]]
+
+            self.move_piece(start, end)
+
+            value = self.minimax(depth - 1, not is_white)
+
+            # undo
+            self.board[start[0]][start[1]] = piece
+            self.board[end[0]][end[1]] = captured
+
+            if is_white:
+                if value > best_value:
+                    best_value = value
+                    best_move = move
+            else:
+                if value < best_value:
+                    best_value = value
+                    best_move = move
+
+        return best_move
