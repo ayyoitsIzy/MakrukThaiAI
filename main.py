@@ -2,10 +2,6 @@ import tkinter as tk
 from game import Game
 
 # ── Piece mapping ──────────────────────────────────────────────────────────────
-# Makruk pieces mapped to Unicode chess symbols
-# White (upper): K=King, M=Queen(Met), R=Rook, B=Bishop(Khon), N=Knight, P=Pawn
-# Black (lower): same letters lowercase
-
 PIECE_UNICODE = {
     'K': '♔', 'M': '♕', 'R': '♖', 'B': '♗', 'N': '♘', 'P': '♙',
     'k': '♚', 'm': '♛', 'r': '♜', 'b': '♝', 'n': '♞', 'p': '♟',
