@@ -525,34 +525,87 @@ class Game:
             self.tt[tt_key] = (depth, flag, best)
             return best
 
-    def get_best_move(self, depth):
-        self.killers = [[None, None] for _ in range(20)]
-        is_white = (self.turn == 0)
-        best_move = None
+    def _count_total_pieces(self):
+        """นับจำนวนหมากทั้งหมดบนกระดาน (ไม่รวมช่องว่าง)"""
+        return sum(1 for r in self.board for c in r if c != '.')
 
-        if is_white:
-            best_val = -float('inf')
-            for start, end in self.order_moves(self.get_all_moves(True), depth):
-                cap   = self.board[end[0]][end[1]]
-                piece = self.board[start[0]][start[1]]
-                saved = self.hash
-                self.move_piece(start, end)
-                val = self.minimax(depth-1, -float('inf'), float('inf'), False)
-                self.board[start[0]][start[1]] = piece
-                self.board[end[0]][end[1]]     = cap
-                self.hash = saved
-                if val > best_val: best_val = val; best_move = (start, end)
+    def _get_temperature(self):
+        """
+        คำนวณ temperature ตามช่วงเกม
+        - Opening  (หมาก >= 28) : temperature สูง → เดินหลากหลาย
+        - Midgame  (หมาก 16-27) : temperature กลาง
+        - Endgame  (หมาก < 16)  : temperature ต่ำ → เล่นดีที่สุด
+        """
+        pieces = self._count_total_pieces()
+        if pieces >= 28:
+            return 1.4   # opening: หลากหลายมาก
+        elif pieces >= 16:
+            return 0.7   # midgame: ปานกลาง
         else:
-            best_val = float('inf')
-            for start, end in self.order_moves(self.get_all_moves(False), depth):
-                cap   = self.board[end[0]][end[1]]
-                piece = self.board[start[0]][start[1]]
-                saved = self.hash
-                self.move_piece(start, end)
-                val = self.minimax(depth-1, -float('inf'), float('inf'), True)
-                self.board[start[0]][start[1]] = piece
-                self.board[end[0]][end[1]]     = cap
-                self.hash = saved
-                if val < best_val: best_val = val; best_move = (start, end)
+            return 0.15  # endgame: ใกล้ deterministic
 
-        return best_move
+    def _sample_move(self, moves_scores, temperature, is_white):
+        """
+        Temperature sampling: softmax บน scores แล้วสุ่ม
+        temperature → 0   : เลือก best move เสมอ (deterministic)
+        temperature = 1.0 : สุ่มตามสัดส่วน score
+        temperature > 1.0 : สุ่มมากขึ้น (flatten distribution)
+        """
+        import math
+
+        if not moves_scores:
+            return None
+
+        # ถ้า temperature ต่ำมาก ๆ ให้ greedy เลย
+        if temperature < 0.05:
+            if is_white:
+                return max(moves_scores, key=lambda x: x[2])[:2]
+            else:
+                return min(moves_scores, key=lambda x: x[2])[:2]
+
+        # flip score สำหรับ Black ให้สูง = ดี เหมือนกัน
+        scores = [v if is_white else -v for _, _, v in moves_scores]
+
+        # Softmax with temperature — ลบ max ก่อนเพื่อ numerical stability
+        max_s = max(scores)
+        exp_s = [math.exp((s - max_s) / temperature) for s in scores]
+        total = sum(exp_s)
+        probs = [e / total for e in exp_s]
+
+        idx = random.choices(range(len(moves_scores)), weights=probs, k=1)[0]
+        return moves_scores[idx][0], moves_scores[idx][1]
+
+    def get_best_move(self, depth, temperature=None):
+        """
+        หา move ที่ดีที่สุดด้วย minimax + alpha-beta
+        แล้วเลือกด้วย temperature sampling เพื่อเพิ่ม variance
+
+        temperature=None  → คำนวณอัตโนมัติตามช่วงเกม
+        temperature=0.0   → deterministic (เหมือนเดิม)
+        temperature=1.5   → สุ่มมาก (เหมาะ opening)
+        """
+        self.killers  = [[None, None] for _ in range(20)]
+        is_white      = (self.turn == 0)
+        moves_scores  = []
+
+        # คำนวณ temperature อัตโนมัติถ้าไม่ได้ระบุ
+        if temperature is None:
+            temperature = self._get_temperature()
+
+        all_moves = self.order_moves(self.get_all_moves(is_white), depth)
+
+        for start, end in all_moves:
+            cap   = self.board[end[0]][end[1]]
+            piece = self.board[start[0]][start[1]]
+            saved = self.hash
+            self.move_piece(start, end)
+            val = self.minimax(depth - 1, -float('inf'), float('inf'), not is_white)
+            self.board[start[0]][start[1]] = piece
+            self.board[end[0]][end[1]]     = cap
+            self.hash = saved
+            moves_scores.append((start, end, val))
+
+        if not moves_scores:
+            return None
+
+        return self._sample_move(moves_scores, temperature, is_white)
