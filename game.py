@@ -118,8 +118,8 @@ class Game:
         [-30,-40,-40,-50,-50,-40,-40,-30],
     ]
     PIECE_VALUES = {
-        'p': 100, 'n': 320, 'b': 330,
-        'r': 500, 'm': 400, 'k': 20000
+        'p': 100, 'n': 450, 'b': 350,
+        'r': 500, 'm': 300, 'k': 20000
     }
 
     # -------------------- helpers --------------------
@@ -458,8 +458,40 @@ class Game:
     def order_moves(self, moves, depth):
         return sorted(moves, key=lambda m: self.score_move(m[0], m[1], depth), reverse=True)
 
+    # -------------------- Repetition Penalty --------------------
+    # penalty ที่ใส่เข้าไปใน score เพื่อให้ AI หลีกเลี่ยง position ซ้ำ
+    # ยิ่งซ้ำมาก penalty ยิ่งสูง → AI จะเลือก move อื่นแทน
+    REPEAT_PENALTY = {1: 0, 2: 300, 3: 99999}
+
+    def _repeat_penalty(self, h, is_maximizing):
+        """คืน penalty score สำหรับ position hash h ตาม history จริง"""
+        count = self.position_history.get(h, 0)
+        penalty = self.REPEAT_PENALTY.get(count, 99999)
+        # White maximize → penalty เป็นลบ, Black minimize → penalty เป็นบวก
+        return -penalty if is_maximizing else penalty
+
     # -------------------- Minimax --------------------
-    def minimax(self, depth, alpha, beta, is_maximizing):
+    def minimax(self, depth, alpha, beta, is_maximizing, sim_history=None):
+        """
+        minimax + alpha-beta pruning พร้อม repetition penalty
+
+        sim_history: dict ของ {hash: count} สำหรับ simulate ใน search tree
+                     แยกจาก self.position_history (history จริงของเกม)
+                     เพื่อให้ AI รู้ว่า "ถ้าเดิน move นี้แล้วจะซ้ำไหม"
+        """
+        if sim_history is None:
+            sim_history = {}
+
+        # ตรวจ repetition ใน simulation tree ก่อน
+        sim_count = sim_history.get(self.hash, 0)
+        real_count = self.position_history.get(self.hash, 0)
+        total_count = real_count + sim_count
+
+        if total_count >= 3:
+            # position ซ้ำครบ 3 ครั้ง → เสมอแน่ ๆ คืนค่า 0 + penalty
+            # penalty ทำให้ AI พยายามหลีกเลี่ยงสายนี้
+            return -500 if is_maximizing else 500
+
         tt_key = self.hash
         if tt_key in self.tt:
             td, tf, tv = self.tt[tt_key]
@@ -469,7 +501,12 @@ class Game:
                 if tf == 'upper' and tv <= alpha: return tv
 
         if depth == 0:
-            return self.evaluate_board()
+            # ใส่ penalty เล็กน้อยถ้า position นี้เคยเกิดขึ้นแล้ว
+            base = self.evaluate_board()
+            if total_count == 2:
+                # ใกล้จะซ้ำครั้งที่ 3 → ลด score เพื่อหลีกเลี่ยง
+                base += -200 if is_maximizing else 200
+            return base
 
         moves = self.get_all_moves(is_maximizing)
         if not moves:
@@ -487,7 +524,12 @@ class Game:
                 piece = self.board[start[0]][start[1]]
                 saved = self.hash
                 self.move_piece(start, end)
-                val = self.minimax(depth-1, alpha, beta, False)
+
+                # อัปเดต sim_history สำหรับ branch นี้
+                new_sim = dict(sim_history)
+                new_sim[self.hash] = new_sim.get(self.hash, 0) + 1
+
+                val = self.minimax(depth-1, alpha, beta, False, new_sim)
                 self.board[start[0]][start[1]] = piece
                 self.board[end[0]][end[1]]     = cap
                 self.hash = saved
@@ -509,7 +551,11 @@ class Game:
                 piece = self.board[start[0]][start[1]]
                 saved = self.hash
                 self.move_piece(start, end)
-                val = self.minimax(depth-1, alpha, beta, True)
+
+                new_sim = dict(sim_history)
+                new_sim[self.hash] = new_sim.get(self.hash, 0) + 1
+
+                val = self.minimax(depth-1, alpha, beta, True, new_sim)
                 self.board[start[0]][start[1]] = piece
                 self.board[end[0]][end[1]]     = cap
                 self.hash = saved
@@ -599,7 +645,8 @@ class Game:
             piece = self.board[start[0]][start[1]]
             saved = self.hash
             self.move_piece(start, end)
-            val = self.minimax(depth - 1, -float('inf'), float('inf'), not is_white)
+            init_sim = {self.hash: 1}
+            val = self.minimax(depth - 1, -float('inf'), float('inf'), not is_white, init_sim)
             self.board[start[0]][start[1]] = piece
             self.board[end[0]][end[1]]     = cap
             self.hash = saved
